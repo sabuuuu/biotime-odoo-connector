@@ -51,6 +51,7 @@ TERMINALS_OUT = {sn.strip() for sn in os.environ.get("TERMINALS_OUT", "").split(
 TERMINALS_IGNORE = {sn.strip() for sn in os.environ.get("TERMINALS_IGNORE", "").split(",") if sn.strip()}
 # Terminal rules apply from this date (YYYY-MM-DD); earlier punches all alternate in/out
 TERMINAL_RULES_SINCE = os.environ.get("TERMINAL_RULES_SINCE", "").strip()
+SYNC_START_DATE = os.environ.get("SYNC_START_DATE", "").strip()
 PAGE_SIZE = 500
 
 FMT = "%Y-%m-%d %H:%M:%S"

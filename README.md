@@ -120,6 +120,7 @@ flowchart TD
 | `TERMINALS_OUT` | — | Comma-separated serial numbers for dedicated exit terminals |
 | `TERMINALS_IGNORE` | — | Comma-separated serial numbers of access-only terminals (door opening); their punches are ignored for attendance and reported when they are the only punch of the day |
 | `TERMINAL_RULES_SINCE` | — | Date (`YYYY-MM-DD`) from which the terminal rules apply; earlier punches from all terminals alternate in/out |
+| `SYNC_START_DATE` | — | Go-live date (`YYYY-MM-DD`): the incremental sync never imports punches before it |
 
 ---
 
