@@ -1,7 +1,7 @@
 # ZKBioTime to Odoo Attendance Synchronization
 
 [![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
-[![Odoo Compatibility](https://img.shields.io/badge/odoo-14%20%7C%2015%20%7C%2016%20%7C%2017%20%7C%2018-purple.svg)](https://www.odoo.com)
+[![Odoo Compatibility](https://img.shields.io/badge/odoo-14%20%7C%2015%20%7C%2016%20%7C%2017%20%7C%2018%20%7C%2019-purple.svg)](https://www.odoo.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A robust, idempotent synchronization bridge between **ZKTeco ZKBioTime** biometric time & attendance systems and **Odoo HR Attendance** (`hr.attendance`).
@@ -118,6 +118,8 @@ flowchart TD
 | `DUPLICATE_MINUTES` | `2` | Ignore consecutive swipes within this number of minutes |
 | `TERMINALS_IN` | — | Comma-separated serial numbers for dedicated entrance terminals |
 | `TERMINALS_OUT` | — | Comma-separated serial numbers for dedicated exit terminals |
+| `TERMINALS_IGNORE` | — | Comma-separated serial numbers of access-only terminals (door opening); their punches are ignored for attendance and reported when they are the only punch of the day |
+| `TERMINAL_RULES_SINCE` | — | Date (`YYYY-MM-DD`) from which the terminal rules apply; earlier punches from all terminals alternate in/out |
 
 ---
 

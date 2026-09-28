@@ -47,6 +47,10 @@ DUPLICATE_MINUTES = float(os.environ.get("DUPLICATE_MINUTES", "2"))
 
 TERMINALS_IN = {sn.strip() for sn in os.environ.get("TERMINALS_IN", "").split(",") if sn.strip()}
 TERMINALS_OUT = {sn.strip() for sn in os.environ.get("TERMINALS_OUT", "").split(",") if sn.strip()}
+# Access-only terminals (door opening): their punches are not attendance punches
+TERMINALS_IGNORE = {sn.strip() for sn in os.environ.get("TERMINALS_IGNORE", "").split(",") if sn.strip()}
+# Terminal rules apply from this date (YYYY-MM-DD); earlier punches all alternate in/out
+TERMINAL_RULES_SINCE = os.environ.get("TERMINAL_RULES_SINCE", "").strip()
 PAGE_SIZE = 500
 
 FMT = "%Y-%m-%d %H:%M:%S"
@@ -102,13 +106,31 @@ def utc_to_local(value):
 
 
 def punch_direction(txn):
-    """Determine punch direction ('in', 'out', or None) from terminal serial."""
+    """Determine punch direction from terminal serial: 'in', 'out', None (alternate) or 'ignore'."""
+    if TERMINAL_RULES_SINCE and (txn.get("punch_time") or "9999")[:10] < TERMINAL_RULES_SINCE:
+        return None
     sn = str(txn.get("terminal_sn") or "").strip()
+    if sn in TERMINALS_IGNORE:
+        return "ignore"
     if sn in TERMINALS_IN:
         return "in"
     if sn in TERMINALS_OUT:
         return "out"
     return None
+
+
+DOOR_ONLY_MSG = "porte ouverte mais aucun pointage sur la pointeuse intérieure ce jour-là"
+
+
+def door_only_days(door_days, punches_by_code):
+    """Days where an employee only used access-only terminals: {code: [date, ...]}."""
+    result = {}
+    for code, days in door_days.items():
+        worked = {utc_to_local(t).date() for t, _ in punches_by_code.get(code, [])}
+        missing = sorted(days - worked)
+        if missing:
+            result[code] = missing
+    return result
 
 
 class BioTime:
@@ -289,19 +311,30 @@ def run(start_time, end_time):
     odoo = Odoo()
     employees = odoo.employee_map()
 
-    seen, punches_by_code, unknown_terminals = set(), defaultdict(list), set()
+    seen, punches_by_code, unknown_terminals, ignored = set(), defaultdict(list), set(), 0
+    door_days = defaultdict(set)
     for txn in biotime.transactions(start_time, end_time):
         code = str(txn.get("emp_code") or "").strip()
         if txn["id"] in seen or not code or not txn.get("punch_time"):
             continue
         seen.add(txn["id"])
-        punches_by_code[code].append((local_to_utc(txn["punch_time"]), punch_direction(txn)))
-        if (TERMINALS_IN or TERMINALS_OUT) and punch_direction(txn) is None:
+        direction = punch_direction(txn)
+        if direction == "ignore":
+            ignored += 1
+            door_days[code].add(datetime.strptime(txn["punch_time"], FMT).date())
+            continue
+        punches_by_code[code].append((local_to_utc(txn["punch_time"]), direction))
+        if (TERMINALS_IN or TERMINALS_OUT) and direction is None and punch_direction({"terminal_sn": txn.get("terminal_sn")}) is None:
             unknown_terminals.add(str(txn.get("terminal_sn")))
-    log.info("%d pointages récupérés pour %d employé(s)", len(seen), len(punches_by_code))
+    log.info("%d pointages récupérés pour %d employé(s), dont %d d'ouverture de porte ignorés",
+             len(seen), len(punches_by_code), ignored)
     if unknown_terminals:
         log.warning("Pointeuse(s) ni en entrée ni en sortie dans .env (alternance utilisée) : %s",
                     ", ".join(sorted(unknown_terminals)))
+
+    for code, days in door_only_days(door_days, punches_by_code).items():
+        name = employees[code]["name"] if code in employees else f"code {code}"
+        log.warning("%s : %s (%s)", name, DOOR_ONLY_MSG, ", ".join(d.isoformat() for d in days))
 
     unknown = sorted(c for c in punches_by_code if c not in employees)
     if unknown:

@@ -66,12 +66,15 @@ def main():
     txns = sorted(txns.values(), key=lambda t: (str(t.get("emp_code")), t.get("punch_time") or ""))
     print(f"{len(txns)} pointages récupérés.")
 
-    names, punches = {}, defaultdict(list)
+    names, punches, door_days = {}, defaultdict(list), defaultdict(set)
     for t in txns:
         code = str(t.get("emp_code") or "").strip()
         if code and t.get("punch_time"):
             names[code] = " ".join(filter(None, [t.get("first_name"), t.get("last_name")]))
-            punches[code].append((zk.local_to_utc(t["punch_time"]), zk.punch_direction(t)))
+            if zk.punch_direction(t) == "ignore":
+                door_days[code].add(datetime.strptime(t["punch_time"], zk.FMT).date())
+            else:
+                punches[code].append((zk.local_to_utc(t["punch_time"]), zk.punch_direction(t)))
 
     per_terminal = Counter(str(t.get("terminal_sn") or "") for t in txns)
     try:
@@ -79,7 +82,7 @@ def main():
     except Exception as e:
         print(f"Liste des pointeuses indisponible : {e}")
         terminals = {}
-    sens = {"in": "Entrée", "out": "Sortie", None: "Non configuré (alternance)"}
+    sens = {"in": "Entrée", "out": "Sortie", None: "Alternance entrée/sortie", "ignore": "Ignoré (ouverture porte)"}
     terminal_rows = [[sn, d.get("alias") or "", d.get("area_name") or "", d.get("ip_address") or "",
                       d.get("last_activity") or "", sens[zk.punch_direction({"terminal_sn": sn})], per_terminal.get(sn, 0)]
                      for sn, d in terminals.items()]
@@ -126,6 +129,10 @@ def main():
         days = {zk.utc_to_local(p).date() for p, _ in punches[code]}
         summary.append([code, names[code], len(punches[code]), len(days), len(records), incomplete,
                         round(total_net, 2), round(total_extra, 2)])
+
+    for code, days in zk.door_only_days(door_days, punches).items():
+        for day in days:
+            anomalies.append([code, names[code], day.isoformat(), zk.DOOR_ONLY_MSG])
 
     wb = Workbook()
     wb.remove(wb.active)
