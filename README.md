@@ -113,18 +113,37 @@ flowchart TD
 | `ODOO_DB` | `votre-base` | Name of the Odoo database |
 | `ODOO_USER` | `admin@societe.com` | Email of the Odoo user |
 | `ODOO_API_KEY` | — | Odoo user API Key (*User Preferences > Account Security > API Keys*) |
-| `SAME_DAY_ONLY` | `1` | `1` = Check-in and check-out must occur on same calendar day; `0` = allow overnight shifts |
-| `MAX_SHIFT_HOURS`| `16` | Maximum duration of an open shift before closing as a forgotten check-out |
+| `ODOO_COMPANY` | — | Company whose employees are synced (multi-company databases); empty = all companies of the API user |
 | `DUPLICATE_MINUTES` | `2` | Ignore consecutive swipes within this number of minutes |
-| `TERMINALS_IN` | — | Comma-separated serial numbers for dedicated entrance terminals |
-| `TERMINALS_OUT` | — | Comma-separated serial numbers for dedicated exit terminals |
+| `PAUSE_WINDOW` | `11:30-15:00` | The pause is the longest outing starting in this window; other outings are "sorties" |
+| `OUTING_TOLERANCE_MINUTES` | `10` | Outings up to this duration are not deducted (quick errand) |
+| `DEFAULT_CHECKOUT_TIME` | `18:00` | Departure used when the last departure of the day was not punched |
+| `WORK_DAYS` / `DAILY_HOURS` | `0,1,2,3` / `9` | Expected schedule, used by the Excel preview to show the gap vs expected hours |
 | `TERMINALS_IGNORE` | — | Comma-separated serial numbers of access-only terminals (door opening); their punches are ignored for attendance and reported when they are the only punch of the day |
-| `TERMINAL_RULES_SINCE` | — | Date (`YYYY-MM-DD`) from which the terminal rules apply; earlier punches from all terminals alternate in/out |
+| `TERMINAL_RULES_SINCE` | — | Date (`YYYY-MM-DD`) from which `TERMINALS_IGNORE` applies; earlier punches from all terminals count |
 | `SYNC_START_DATE` | — | Go-live date (`YYYY-MM-DD`): the incremental sync never imports punches before it |
 
 ---
 
 ## How It Works
+
+### One attendance per day
+Every run rebuilds each employee's day from all punches on the attendance terminal
+(alternating in / out) and creates or updates **one `hr.attendance` per employee and day**.
+HR only reads these records in Odoo: the sync is the only writer.
+
+| Odoo field | Value |
+| :--- | :--- |
+| `check_in` / `check_out` | First / last punch of the day (`DEFAULT_CHECKOUT_TIME` if the last departure is missing) |
+| `x_studio_debut_pause` / `x_studio_fin_pause` | Longest outing starting within `PAUSE_WINDOW` |
+| `x_studio_heures_travailles` | `(check_out − check_in) − pause − outings` |
+
+- Outings are the other gaps of the day. They are computed by the script, not stored in Odoo: outings up to
+  `OUTING_TOLERANCE_MINUTES` are not deducted, and none are deducted for employees with
+  `x_studio_sorties_professionnelles` checked (on `hr.employee`).
+- Anomalies (missing departure, door-only day…) go to the log and to the Excel preview.
+- Missing Studio fields are skipped with a warning; a field computed in Studio is never written by the script.
+  Days with several records in Odoo are left untouched.
 
 ### Employee Mapping
 The sync maps BioTime punches to Odoo employees using either:
@@ -141,6 +160,11 @@ Ensure employees in Odoo have their `barcode` or `identification_id` set to matc
 
 ## Usage
 
+### Tests
+```bash
+python -m unittest -v
+```
+
 ### 1. Dry Run / Inspection (Excel Export)
 Before syncing to Odoo, generate a comprehensive audit report of your punches:
 ```bash
@@ -153,7 +177,7 @@ python preview-biotime-excel.py 2025-01-01
 # Preview a specific date range
 python preview-biotime-excel.py 2025-01-01 2025-01-31
 ```
-This generates an `.xlsx` file containing raw punches, detected shift pairings, employee summaries, and detected anomalies (e.g., forgotten badge-outs).
+This generates an `.xlsx` file with exactly the attendance lines the sync would write (one per employee and day), anomalies, employee summary (with Odoo matching when Odoo is reachable), terminals and raw punches.
 
 ### 2. Initial Historical Import
 To backfill historical attendance data into Odoo:
