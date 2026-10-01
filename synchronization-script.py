@@ -13,5 +13,8 @@ if __name__ == "__main__":
         start = end - timedelta(hours=LOOKBACK_HOURS)
         if zk.SYNC_START_DATE:  # never sync punches before the go-live date
             start = max(start, datetime.strptime(zk.SYNC_START_DATE, "%Y-%m-%d"))
+        if start > end:
+            zk.log.info("Synchronisation inactive avant le %s", zk.SYNC_START_DATE)
+            sys.exit(0)
         errors = zk.run(start, end)
     sys.exit(1 if errors else 0)
