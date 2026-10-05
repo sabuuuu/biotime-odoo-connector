@@ -239,7 +239,12 @@ def build_day(punches, closed, door_punches=(), pro=False):
     outings_hours = sum(_hours(a, b) for a, b in outings if b - a > tolerance)
 
     check_out, anomalies = None, []
-    if len(kept) % 2 == 0:
+    # Day in progress, out during the pause window with no pause yet: lunch break, not departure
+    on_break = (not closed and len(kept) % 2 == 0 and pause is None
+                and PAUSE_START <= kept[-1].time() < PAUSE_END)
+    if on_break:
+        pause = (kept[-1], None)
+    elif len(kept) % 2 == 0:
         check_out = kept[-1]
     elif closed:
         check_out = max(datetime.combine(kept[-1].date(), DEFAULT_CHECKOUT), kept[-1])
@@ -251,6 +256,8 @@ def build_day(punches, closed, door_punches=(), pro=False):
     if check_out:
         hours = _hours(kept[0], check_out) - (_hours(*pause) if pause else 0.0) - (0.0 if pro else outings_hours)
     detail = " | ".join(f"{a:%H:%M}-{b:%H:%M}" if b else f"{a:%H:%M}-…" for a, b in segments)
+    if on_break:
+        detail += " | pause en cours"
     return {
         "check_in": kept[0],
         "check_out": check_out,

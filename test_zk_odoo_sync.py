@@ -58,6 +58,19 @@ class BuildDayTest(unittest.TestCase):
         self.assertEqual((d["check_out"], d["hours"], d["anomaly"]), (None, 0.0, ""))
         self.assertEqual(d["detail"], "08:00-12:30 | 13:30-…")
 
+    def test_lunch_in_progress_is_not_departure(self):
+        d = zk.build_day(at("07:38", "13:03"), closed=False)
+        self.assertEqual((d["check_out"], d["pause_start"], d["pause_end"], d["hours"]), (None, at("13:03")[0], None, 0.0))
+        self.assertEqual(d["detail"], "07:38-13:03 | pause en cours")
+
+    def test_left_at_lunch_and_never_came_back(self):
+        d = zk.build_day(at("07:38", "13:03"), closed=True)
+        self.assertEqual((d["check_out"], d["pause_start"], d["hours"]), (at("13:03")[0], None, 5.42))
+
+    def test_departure_after_pause_window_while_day_open(self):
+        d = zk.build_day(at("08:00", "12:30", "13:30", "18:00"), closed=False)
+        self.assertEqual((d["check_out"], d["hours"]), (at("18:00")[0], 9.0))
+
     def test_missing_departure_set_to_18h(self):
         d = zk.build_day(at("08:00", "12:30", "13:30"), closed=True)
         self.assertEqual((d["check_out"], d["hours"]), (at("18:00")[0], 9.0))
@@ -153,7 +166,8 @@ class SyncEmployeeTest(unittest.TestCase):
         self.assertEqual(zk.sync_employee(odoo, self.EMP, self.days("08:00", closed=False), self.FIELDS), (1, 0))
         self.assertEqual(odoo.records[1]["check_out"], False)  # arrived, still at work
         self.assertEqual(zk.sync_employee(odoo, self.EMP, self.days("08:00", "12:30", closed=False), self.FIELDS), (0, 1))
-        self.assertEqual(odoo.records[1]["check_out"], "2026-10-05 11:30:00")  # out for lunch
+        self.assertEqual((odoo.records[1]["check_out"], odoo.records[1]["x_studio_debut_pause"]),
+                         (False, "2026-10-05 11:30:00"))  # out for lunch: pause in progress, not departure
         self.assertEqual(zk.sync_employee(odoo, self.EMP, self.days("08:00", "12:30", "13:30", "18:00"), self.FIELDS), (0, 1))
         rec = odoo.records[1]
         self.assertEqual((rec["x_studio_debut_pause"], rec["check_out"], rec["x_studio_heures_travailles"]),
