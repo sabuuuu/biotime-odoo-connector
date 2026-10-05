@@ -5,6 +5,7 @@ day's punches on the attendance terminal: check_in, pause start/end, check_out a
 worked hours (outings computed here, not stored in Odoo). Re-running a sync is idempotent.
 The sync is the only writer: HR only reads attendances in Odoo.
 """
+import csv
 import logging
 import os
 import sys
@@ -63,6 +64,13 @@ TERMINALS_IGNORE = {sn.strip() for sn in os.environ.get("TERMINALS_IGNORE", "").
 TERMINAL_RULES_SINCE = os.environ.get("TERMINAL_RULES_SINCE", "").strip()
 # Go-live date (YYYY-MM-DD): the incremental sync ignores punches before it
 SYNC_START_DATE = os.environ.get("SYNC_START_DATE", "").strip()
+# Terminal clock correction: minutes added to punches whose terminal time is in
+# [CLOCK_OFFSET_FROM, CLOCK_OFFSET_UNTIL) ("YYYY-MM-DD HH:MM", empty = no bound)
+CLOCK_OFFSET_MINUTES = float(os.environ.get("CLOCK_OFFSET_MINUTES", "0"))
+CLOCK_OFFSET_FROM = os.environ.get("CLOCK_OFFSET_FROM", "").strip()
+CLOCK_OFFSET_UNTIL = os.environ.get("CLOCK_OFFSET_UNTIL", "").strip()
+# Manual corrections (arrival / departure overrides), see corrections.example.csv
+CORRECTIONS_FILE = BASE_DIR / os.environ.get("CORRECTIONS_FILE", "corrections.csv")
 PAGE_SIZE = 500
 
 # Odoo Studio fields on hr.attendance. Missing or computed fields are not written.
@@ -139,6 +147,52 @@ def utc_to_local(value):
     return value.replace(tzinfo=timezone.utc).astimezone(LOCAL_TZ).replace(tzinfo=None)
 
 
+def correct_clock(punch):
+    """Apply the terminal clock correction to a terminal-time punch."""
+    raw = f"{punch:%Y-%m-%d %H:%M}"
+    if CLOCK_OFFSET_MINUTES and (not CLOCK_OFFSET_FROM or raw >= CLOCK_OFFSET_FROM)             and (not CLOCK_OFFSET_UNTIL or raw < CLOCK_OFFSET_UNTIL):
+        return punch + timedelta(minutes=CLOCK_OFFSET_MINUTES)
+    return punch
+
+
+def load_corrections(path=None):
+    """Read manual corrections: {(code, date): {"arrival": datetime, "departure": datetime}}.
+
+    CSV (';' separated, Excel-friendly): numero;date;arrivee;depart;commentaire
+    """
+    path = path or CORRECTIONS_FILE
+    corrections = {}
+    if not path.exists():
+        return corrections
+    with path.open(encoding="utf-8-sig", newline="") as fh:
+        for i, row in enumerate(csv.DictReader(fh, delimiter=";"), start=2):
+            try:
+                code, day = row["numero"].strip(), datetime.strptime(row["date"].strip(), "%Y-%m-%d").date()
+                entry = {}
+                for key, col in (("arrival", "arrivee"), ("departure", "depart")):
+                    if (row.get(col) or "").strip():
+                        entry[key] = datetime.combine(day, datetime.strptime(row[col].strip(), "%H:%M").time())
+            except (KeyError, ValueError, AttributeError) as e:
+                log.warning("%s ligne %d ignorée (format attendu numero;date;arrivee;depart) : %s", path.name, i, e)
+                continue
+            if entry:
+                corrections.setdefault((code, day), {}).update(entry)
+    return corrections
+
+
+def apply_correction(punches, correction):
+    """Override the arrival (first punch) and/or departure (last punch) of a day."""
+    punches = sorted(punches)
+    if "arrival" in correction:
+        punches = [correction["arrival"]] + punches[1:]
+    if "departure" in correction:
+        if len(punches) % 2 == 0 and len(punches) > 0:
+            punches[-1] = correction["departure"]
+        else:
+            punches.append(correction["departure"])
+    return sorted(punches)
+
+
 def is_door_punch(txn):
     """True for punches on access-only terminals (door opening), which are not attendance."""
     if TERMINAL_RULES_SINCE and (txn.get("punch_time") or "9999")[:10] < TERMINAL_RULES_SINCE:
@@ -211,11 +265,12 @@ def build_day(punches, closed, door_punches=(), pro=False):
     }
 
 
-def group_punches(txns):
-    """Group BioTime transactions by employee code and local day.
+def group_punches(txns, first_day, last_day, corrections=None):
+    """Group BioTime transactions by employee code and local day, with clock and manual corrections.
 
     Returns (attendance, door, names): {code: {date: [local datetime]}} for attendance and
-    access-only punches, and {code: BioTime name}.
+    access-only punches, and {code: BioTime name}. Corrections only apply to days in
+    [first_day, last_day], the days whose punches were all fetched.
     """
     attendance, door = defaultdict(lambda: defaultdict(list)), defaultdict(lambda: defaultdict(list))
     names, seen = {}, set()
@@ -225,8 +280,13 @@ def group_punches(txns):
             continue
         seen.add(txn.get("id"))
         names[code] = " ".join(filter(None, [txn.get("first_name"), txn.get("last_name")]))
-        local = datetime.strptime(txn["punch_time"], FMT)
+        local = correct_clock(datetime.strptime(txn["punch_time"], FMT))
         (door if is_door_punch(txn) else attendance)[code][local.date()].append(local)
+    for (code, day), correction in (load_corrections() if corrections is None else corrections).items():
+        if not first_day <= day <= last_day:
+            continue
+        attendance[code][day] = apply_correction(attendance[code].get(day, []), correction)
+        log.info("Correction manuelle appliquée : n°%s le %s", code, day)
     return attendance, door, names
 
 
@@ -402,7 +462,8 @@ def run(start_time, end_time):
     employees = odoo.employee_map()
     fields = odoo.writable_attendance_fields()
 
-    attendance, door, names = group_punches(biotime.transactions(start_time, end_time))
+    attendance, door, names = group_punches(biotime.transactions(start_time, end_time),
+                                            start_time.date(), end_time.date())
     codes = sorted(set(attendance) | set(door), key=lambda c: (len(c), c))
     log.info("%d employé(s) avec des pointages", len(codes))
 

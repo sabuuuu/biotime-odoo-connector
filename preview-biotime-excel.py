@@ -69,7 +69,7 @@ def main():
     txns = sorted({t["id"]: t for t in biotime.transactions(start, end)}.values(),
                   key=lambda t: (str(t.get("emp_code")), t.get("punch_time") or ""))
     print(f"{len(txns)} pointages récupérés.")
-    attendance, door, names = zk.group_punches(txns)
+    attendance, door, names = zk.group_punches(txns, start.date(), end.date())
 
     try:
         employees = zk.Odoo().employee_map()

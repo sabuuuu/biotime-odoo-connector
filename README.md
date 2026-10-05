@@ -121,7 +121,11 @@ flowchart TD
 | `WORK_DAYS` / `DAILY_HOURS` | `0,1,2,3` / `9` | Expected schedule, used by the Excel preview to show the gap vs expected hours |
 | `TERMINALS_IGNORE` | — | Comma-separated serial numbers of access-only terminals (door opening); their punches are ignored for attendance and reported when they are the only punch of the day |
 | `TERMINAL_RULES_SINCE` | — | Date (`YYYY-MM-DD`) from which `TERMINALS_IGNORE` applies; earlier punches from all terminals count |
+| `SYNC_LOOKBACK_HOURS` | `168` | Hours re-read on every incremental run (covers PCs switched off and offline terminals) |
 | `SYNC_START_DATE` | — | Go-live date (`YYYY-MM-DD`): the incremental sync never imports punches before it |
+| `CLOCK_OFFSET_MINUTES` | `0` | Minutes added to punches when the terminal clock is wrong |
+| `CLOCK_OFFSET_FROM` / `CLOCK_OFFSET_UNTIL` | — | Terminal-time window (`YYYY-MM-DD HH:MM`) where the clock correction applies |
+| `CORRECTIONS_FILE` | `corrections.csv` | Manual corrections: `numero;date;arrivee;depart;commentaire` — replaces the day's arrival and/or departure (see `corrections.example.csv`) |
 
 ---
 
@@ -181,7 +185,7 @@ This generates an `.xlsx` file with exactly the attendance lines the sync would 
 
 ### 2. Initial Historical Import
 To backfill historical attendance data into Odoo:
-1. Set `START_DATE` in [`data-trasnfer-odoo.py`](file:///c:/Users/Sabrina/Desktop/idk/data-trasnfer-odoo.py).
+1. Set `START_DATE` in [`data-trasnfer-odoo.py`](data-trasnfer-odoo.py).
 2. Run:
    ```bash
    python data-trasnfer-odoo.py

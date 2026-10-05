@@ -20,6 +20,7 @@ env/
 *.xlsx
 *.xls
 *.csv
+!corrections.example.csv
 ~$*.xlsx
 ~$*.xls
 

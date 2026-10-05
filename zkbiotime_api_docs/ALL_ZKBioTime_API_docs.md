@@ -1,11 +1,11 @@
 # ZKBioTime 8.0 API Documentation
 
-Source: http://192.168.100.250:8083/docs/api-docs/
+Source: http://{host}:{port}/docs/api-docs/
 
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/ -->
+<!-- http://{host}:{port}/docs/api-docs/ -->
 
 # Overview
 
@@ -22,7 +22,7 @@ Source: http://192.168.100.250:8083/docs/api-docs/
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/request_and_response.html -->
+<!-- http://{host}:{port}/docs/api-docs/request_and_response.html -->
 
 # Request & Response
 
@@ -61,7 +61,7 @@ http://{host}:{port}
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/get_auth_token.html -->
+<!-- http://{host}:{port}/docs/api-docs/get_auth_token.html -->
 
 # Get Auth Token
 
@@ -208,7 +208,7 @@ public static void main(String[] args){
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/use_auth_token.html -->
+<!-- http://{host}:{port}/docs/api-docs/use_auth_token.html -->
 
 # Use Auth Token
 
@@ -310,7 +310,7 @@ public static void main(String[] args){
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/api_example.html -->
+<!-- http://{host}:{port}/docs/api-docs/api_example.html -->
 
 # Api Example
 
@@ -464,7 +464,7 @@ print(response.text)
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/area_api.html -->
+<!-- http://{host}:{port}/docs/api-docs/area_api.html -->
 
 # Area
 
@@ -647,7 +647,7 @@ None
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/department_api.html -->
+<!-- http://{host}:{port}/docs/api-docs/department_api.html -->
 
 # Department
 
@@ -830,7 +830,7 @@ None
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/position_api.html -->
+<!-- http://{host}:{port}/docs/api-docs/position_api.html -->
 
 # Position
 
@@ -1013,7 +1013,7 @@ None
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/employee_api.html -->
+<!-- http://{host}:{port}/docs/api-docs/employee_api.html -->
 
 # Employee
 
@@ -1527,7 +1527,7 @@ None
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/resign_api.html -->
+<!-- http://{host}:{port}/docs/api-docs/resign_api.html -->
 
 # Resign
 
@@ -1755,7 +1755,7 @@ None
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/terminal_api.html -->
+<!-- http://{host}:{port}/docs/api-docs/terminal_api.html -->
 
 # Device
 
@@ -2137,7 +2137,7 @@ None
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/transaction_api.html -->
+<!-- http://{host}:{port}/docs/api-docs/transaction_api.html -->
 
 # Transaction
 
@@ -2293,7 +2293,7 @@ b'id,em......-06-05 08:48:00\r\n'
 
 ---
 
-<!-- http://192.168.100.250:8083/docs/api-docs/att_report.html -->
+<!-- http://{host}:{port}/docs/api-docs/att_report.html -->
 
 # Transaction Report
 

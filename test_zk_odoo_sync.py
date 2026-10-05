@@ -6,7 +6,9 @@ from datetime import date, datetime
 # Fixed settings so the tests do not depend on the local .env
 os.environ.update({"BIOTIME_TZ": "Africa/Algiers", "DUPLICATE_MINUTES": "2", "PAUSE_WINDOW": "11:30-15:00",
                    "OUTING_TOLERANCE_MINUTES": "10", "DEFAULT_CHECKOUT_TIME": "18:00",
-                   "TERMINALS_IGNORE": "DOOR", "TERMINAL_RULES_SINCE": ""})
+                   "TERMINALS_IGNORE": "DOOR", "TERMINAL_RULES_SINCE": "",
+                   "CLOCK_OFFSET_MINUTES": "60", "CLOCK_OFFSET_FROM": "2026-10-05 00:00",
+                   "CLOCK_OFFSET_UNTIL": "2026-10-05 07:30"})
 import zk_odoo_sync as zk  # noqa: E402
 
 DAY = date(2026, 10, 5)
@@ -81,13 +83,41 @@ class BuildDayTest(unittest.TestCase):
                 {"id": 2, "emp_code": "21", "punch_time": "2026-10-05 08:00:00", "terminal_sn": "INSIDE"},
                 {"id": 2, "emp_code": "21", "punch_time": "2026-10-05 08:00:00", "terminal_sn": "INSIDE"},
                 {"id": 3, "emp_code": "21", "punch_time": "2026-10-05 18:00:00", "terminal_sn": "INSIDE"}]
-        attendance, door, _ = zk.group_punches(txns)
+        attendance, door, _ = zk.group_punches(txns, DAY, DAY, corrections={})
         days = zk.build_days(attendance["21"], door["21"], today=date(2026, 10, 6))
         self.assertEqual((days[DAY]["check_in"], days[DAY]["hours"]), (at("08:00")[0], 10.0))
 
     def test_values_converted_to_utc(self):
         vals = zk.attendance_values(zk.build_day(at("08:00", "18:00"), closed=True), {"hours": "x_h"})
         self.assertEqual(vals, {"check_in": "2026-10-05 07:00:00", "check_out": "2026-10-05 17:00:00", "x_h": 10.0})
+
+
+class CorrectionTest(unittest.TestCase):
+    def test_clock_offset_window(self):
+        self.assertEqual(zk.correct_clock(at("07:07")[0]), at("08:07")[0])
+        self.assertEqual(zk.correct_clock(at("10:31")[0]), at("10:31")[0])  # terminals fixed
+        self.assertEqual(zk.correct_clock(datetime(2026, 10, 4, 7, 0)), datetime(2026, 10, 4, 7, 0))
+
+    def test_arrival_override_replaces_first_punch(self):
+        self.assertEqual(zk.apply_correction(at("08:07", "12:30"), {"arrival": at("08:00")[0]}), at("08:00", "12:30"))
+        self.assertEqual(zk.apply_correction([], {"arrival": at("07:55")[0]}), at("07:55"))
+
+    def test_departure_override(self):
+        self.assertEqual(zk.apply_correction(at("08:00", "17:40"), {"departure": at("18:00")[0]}), at("08:00", "18:00"))
+        self.assertEqual(zk.apply_correction(at("08:00"), {"departure": at("18:00")[0]}), at("08:00", "18:00"))
+
+    def test_corrections_file_and_window(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "c.csv"
+            path.write_text("numero;date;arrivee;depart;commentaire\n5;2026-10-05;08:00;;oubli\n"
+                            "6;2026-10-01;07:55;;hors période\n", encoding="utf-8")
+            corrections = zk.load_corrections(path)
+        txns = [{"id": 1, "emp_code": "5", "punch_time": "2026-10-05 07:07:14", "terminal_sn": "INSIDE"}]
+        attendance, _, _ = zk.group_punches(txns, DAY, DAY, corrections)
+        self.assertEqual(attendance["5"][DAY], at("08:00"))
+        self.assertNotIn(date(2026, 10, 1), attendance["6"])
 
 
 class FakeOdoo:
@@ -113,7 +143,7 @@ class FakeOdoo:
 
 class SyncEmployeeTest(unittest.TestCase):
     FIELDS = {"pause_start": "x_studio_debut_pause", "pause_end": "x_studio_fin_pause", "hours": "x_studio_heures_travailles"}
-    EMP = {"id": 7, "name": "NESRINE"}
+    EMP = {"id": 7, "name": "Employé Test"}
 
     def days(self, *times, closed=True):
         return {DAY: zk.build_day(at(*times), closed=closed)}

@@ -1,0 +1,3 @@
+numero;date;arrivee;depart;commentaire
+5;2026-10-05;08:00;;exemple : remplace l arrivee du jour
+6;2026-10-05;;18:00;exemple : remplace le depart du jour
