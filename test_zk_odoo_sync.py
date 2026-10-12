@@ -127,6 +127,16 @@ class CorrectionTest(unittest.TestCase):
         self.assertEqual((d["pause_start"], d["pause_end"], d["outings_count"]), (*at("11:15", "12:46"), 0))
         self.assertEqual(d["hours"], 8.8)  # 10h19 - 1h31 = 8h48
 
+    def test_pause_correction_adds_missing_return(self):
+        punches = zk.apply_correction(at("08:15", "13:48", "18:07"),
+                                      {"pause_start": at("13:48")[0], "pause_end": at("14:40")[0]})
+        self.assertEqual(punches, at("08:15", "13:48", "14:40", "18:07"))
+
+    def test_pause_correction_only_replaces_closest_punch(self):
+        punches = zk.apply_correction(at("07:22", "12:56", "13:36", "13:59", "18:09"),
+                                      {"pause_start": at("13:56")[0], "pause_end": at("14:50")[0]})
+        self.assertEqual(punches, at("07:22", "12:56", "13:36", "13:56", "14:50", "18:09"))
+
     def test_corrections_file_and_window(self):
         import tempfile
         from pathlib import Path

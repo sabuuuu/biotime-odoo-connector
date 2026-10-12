@@ -191,13 +191,16 @@ PAUSE_CORRECTION_MATCH = timedelta(minutes=20)
 def apply_correction(punches, correction):
     """Override the arrival (first punch), departure (last punch) and/or pause of a day.
 
-    A corrected pause replaces the punches within 20 minutes of its start / end.
+    Each bound of a corrected pause replaces the closest punch within 20 minutes, if any
+    (a missing pause punch is simply added).
     """
     punches = sorted(punches)
     if "pause_start" in correction:
-        start, end = correction["pause_start"], correction["pause_end"]
-        punches = sorted([p for p in punches if abs(p - start) > PAUSE_CORRECTION_MATCH
-                          and abs(p - end) > PAUSE_CORRECTION_MATCH] + [start, end])
+        for bound in (correction["pause_start"], correction["pause_end"]):
+            near = [p for p in punches if abs(p - bound) <= PAUSE_CORRECTION_MATCH]
+            if near:
+                punches.remove(min(near, key=lambda p: abs(p - bound)))
+            punches = sorted(punches + [bound])
     if "arrival" in correction:
         punches = [correction["arrival"]] + punches[1:]
     if "departure" in correction:
