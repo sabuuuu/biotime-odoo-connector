@@ -70,6 +70,22 @@ class BuildDayTest(unittest.TestCase):
         d = zk.build_day(at("08:00", "12:30", "13:30", "18:00"), closed=False)
         self.assertEqual((d["check_out"], d["hours"]), (at("18:00")[0], 9.0))
 
+    def test_door_arrival_when_no_inside_punch_in_the_morning(self):
+        d = zk.build_day(at("13:07", "13:48"), closed=False, door_punches=at("08:04"))
+        self.assertEqual((d["check_in"], d["pause_start"], d["pause_end"], d["check_out"]),
+                         (*at("08:04", "13:07", "13:48"), None))
+        self.assertIn("porte 08:04 retenue", d["anomaly"])
+
+    def test_door_arrival_not_used_when_inside_punched_in_the_morning(self):
+        # inside arrival punched late (08:40) or departure forgotten: no door arrival
+        d = zk.build_day(at("08:40", "12:30", "13:30"), closed=True, door_punches=at("08:05"))
+        self.assertEqual(d["check_in"], at("08:40")[0])
+        self.assertNotIn("porte", d["anomaly"])
+
+    def test_door_arrival_skipped_when_arrival_corrected(self):
+        d = zk.build_day(at("13:07", "13:48"), closed=False, door_punches=at("08:04"), door_arrival=False)
+        self.assertEqual(d["check_in"], at("13:07")[0])
+
     def test_missing_departure_set_to_18h(self):
         d = zk.build_day(at("08:00", "12:30", "13:30"), closed=True)
         self.assertEqual((d["check_out"], d["hours"]), (at("18:00")[0], 9.0))
@@ -114,6 +130,17 @@ class CorrectionTest(unittest.TestCase):
     def test_arrival_override_replaces_first_punch(self):
         self.assertEqual(zk.apply_correction(at("08:07", "12:30"), {"arrival": at("08:00")[0]}), at("08:00", "12:30"))
         self.assertEqual(zk.apply_correction([], {"arrival": at("07:55")[0]}), at("07:55"))
+
+    def test_arrival_replaces_late_first_punch(self):
+        # first inside punch 20 min 26 s after the corrected arrival: still the arrival
+        punch = datetime.combine(DAY, datetime.strptime("08:15:26", "%H:%M:%S").time())
+        self.assertEqual(zk.apply_correction([punch] + at("13:31", "14:11", "18:03"), {"arrival": at("07:55")[0]}),
+                         at("07:55", "13:31", "14:11", "18:03"))
+
+    def test_arrival_added_when_inside_arrival_missing(self):
+        # only the door was punched in the morning: the lunch punches must be kept
+        self.assertEqual(zk.apply_correction(at("13:07", "13:48"), {"arrival": at("08:04")[0]}),
+                         at("08:04", "13:07", "13:48"))
 
     def test_departure_override(self):
         self.assertEqual(zk.apply_correction(at("08:00", "17:40"), {"departure": at("18:00")[0]}), at("08:00", "18:00"))

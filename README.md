@@ -144,6 +144,8 @@ HR only reads these records in Odoo: the sync is the only writer.
 - Outings are the other gaps of the day. They are computed by the script, not stored in Odoo: outings up to
   `OUTING_TOLERANCE_MINUTES` are not deducted, and none are deducted for employees with
   `x_studio_sorties_professionnelles` checked (on `hr.employee`).
+- Door passed in the morning (before `PAUSE_WINDOW`) with no attendance punch until the pause window,
+  more than 30 min later: the door punch is taken as the arrival (unless the arrival is corrected manually).
 - Anomalies (missing departure, door-only day…) go to the log and to the Excel preview.
 - Missing Studio fields are skipped with a warning; a field computed in Studio is never written by the script.
   Days with several records in Odoo are left untouched.
