@@ -64,12 +64,11 @@ TERMINALS_IGNORE = {sn.strip() for sn in os.environ.get("TERMINALS_IGNORE", "").
 TERMINAL_RULES_SINCE = os.environ.get("TERMINAL_RULES_SINCE", "").strip()
 # Go-live date (YYYY-MM-DD): the incremental sync ignores punches before it
 SYNC_START_DATE = os.environ.get("SYNC_START_DATE", "").strip()
-# Terminal clock correction: minutes added to punches whose terminal time is in
-# [CLOCK_OFFSET_FROM, CLOCK_OFFSET_UNTIL) ("YYYY-MM-DD HH:MM", empty = no bound)
-CLOCK_OFFSET_MINUTES = float(os.environ.get("CLOCK_OFFSET_MINUTES", "0"))
-CLOCK_OFFSET_FROM = os.environ.get("CLOCK_OFFSET_FROM", "").strip()
-CLOCK_OFFSET_UNTIL = os.environ.get("CLOCK_OFFSET_UNTIL", "").strip()
-# Manual corrections (arrival / departure overrides), see corrections.example.csv
+# Terminal clock corrections: "FROM|UNTIL|MINUTES" windows separated by ";" (terminal time
+# "YYYY-MM-DD HH:MM", UNTIL excluded, empty bound = open), e.g. "2026-10-05 00:00|2026-10-05 08:30|120"
+CLOCK_OFFSETS = [tuple(part.strip() for part in window.split("|"))
+                 for window in os.environ.get("CLOCK_OFFSETS", "").split(";") if window.strip()]
+# Manual corrections (arrival / departure / pause overrides), format in load_corrections()
 CORRECTIONS_FILE = BASE_DIR / os.environ.get("CORRECTIONS_FILE", "corrections.csv")
 PAGE_SIZE = 500
 
@@ -148,17 +147,19 @@ def utc_to_local(value):
 
 
 def correct_clock(punch):
-    """Apply the terminal clock correction to a terminal-time punch."""
+    """Apply the first CLOCK_OFFSETS window matching a terminal-time punch."""
     raw = f"{punch:%Y-%m-%d %H:%M}"
-    if CLOCK_OFFSET_MINUTES and (not CLOCK_OFFSET_FROM or raw >= CLOCK_OFFSET_FROM)             and (not CLOCK_OFFSET_UNTIL or raw < CLOCK_OFFSET_UNTIL):
-        return punch + timedelta(minutes=CLOCK_OFFSET_MINUTES)
+    for since, until, minutes in CLOCK_OFFSETS:
+        if (not since or raw >= since) and (not until or raw < until):
+            return punch + timedelta(minutes=float(minutes))
     return punch
 
 
 def load_corrections(path=None):
-    """Read manual corrections: {(code, date): {"arrival": datetime, "departure": datetime}}.
+    """Read manual corrections: {(code, date): {"arrival", "departure", "pause_start", "pause_end": datetime}}.
 
-    CSV (';' separated, Excel-friendly): numero;date;arrivee;depart;commentaire
+    CSV (';' separated, Excel-friendly): numero;date;arrivee;depart;debut_pause;fin_pause;commentaire
+    (debut_pause / fin_pause are optional columns, to be given together)
     """
     path = path or CORRECTIONS_FILE
     corrections = {}
@@ -169,20 +170,34 @@ def load_corrections(path=None):
             try:
                 code, day = row["numero"].strip(), datetime.strptime(row["date"].strip(), "%Y-%m-%d").date()
                 entry = {}
-                for key, col in (("arrival", "arrivee"), ("departure", "depart")):
+                for key, col in (("arrival", "arrivee"), ("departure", "depart"),
+                                 ("pause_start", "debut_pause"), ("pause_end", "fin_pause")):
                     if (row.get(col) or "").strip():
                         entry[key] = datetime.combine(day, datetime.strptime(row[col].strip(), "%H:%M").time())
+                if ("pause_start" in entry) != ("pause_end" in entry):
+                    raise ValueError("debut_pause et fin_pause doivent être renseignés ensemble")
             except (KeyError, ValueError, AttributeError) as e:
-                log.warning("%s ligne %d ignorée (format attendu numero;date;arrivee;depart) : %s", path.name, i, e)
+                log.warning("%s ligne %d ignorée (format attendu numero;date;arrivee;depart;debut_pause;fin_pause) : %s",
+                            path.name, i, e)
                 continue
             if entry:
                 corrections.setdefault((code, day), {}).update(entry)
     return corrections
 
 
+PAUSE_CORRECTION_MATCH = timedelta(minutes=20)
+
+
 def apply_correction(punches, correction):
-    """Override the arrival (first punch) and/or departure (last punch) of a day."""
+    """Override the arrival (first punch), departure (last punch) and/or pause of a day.
+
+    A corrected pause replaces the punches within 20 minutes of its start / end.
+    """
     punches = sorted(punches)
+    if "pause_start" in correction:
+        start, end = correction["pause_start"], correction["pause_end"]
+        punches = sorted([p for p in punches if abs(p - start) > PAUSE_CORRECTION_MATCH
+                          and abs(p - end) > PAUSE_CORRECTION_MATCH] + [start, end])
     if "arrival" in correction:
         punches = [correction["arrival"]] + punches[1:]
     if "departure" in correction:
@@ -209,13 +224,14 @@ def _hours(start, end):
     return (end - start).total_seconds() / 3600
 
 
-def build_day(punches, closed, door_punches=(), pro=False):
+def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None):
     """Summarize one employee's day into the values of a single hr.attendance.
 
     punches      : local datetimes on the attendance terminal, alternating in / out
     closed       : True once the day is over (a missing departure is set to DEFAULT_CHECKOUT_TIME)
     door_punches : local datetimes on access-only terminals, used only without attendance punches
     pro          : outings count as work time, only the pause is deducted
+    forced_pause : (start, end) from a manual correction, used as the pause whatever PAUSE_WINDOW
     """
     duplicate = timedelta(minutes=DUPLICATE_MINUTES)
     kept = []
@@ -232,8 +248,8 @@ def build_day(punches, closed, door_punches=(), pro=False):
     # in/out pairs, then the gaps between them (time spent outside)
     segments = [(kept[i], kept[i + 1] if i + 1 < len(kept) else None) for i in range(0, len(kept), 2)]
     gaps = [(segments[i][1], segments[i + 1][0]) for i in range(len(segments) - 1)]
-    pause = max((g for g in gaps if PAUSE_START <= g[0].time() < PAUSE_END),
-                key=lambda g: g[1] - g[0], default=None)
+    pause = next((g for g in gaps if g == forced_pause), None) or max(
+        (g for g in gaps if PAUSE_START <= g[0].time() < PAUSE_END), key=lambda g: g[1] - g[0], default=None)
     outings = [g for g in gaps if g is not pause]
     tolerance = timedelta(minutes=OUTING_TOLERANCE_MINUTES)
     outings_hours = sum(_hours(a, b) for a, b in outings if b - a > tolerance)
@@ -275,12 +291,12 @@ def build_day(punches, closed, door_punches=(), pro=False):
 def group_punches(txns, first_day, last_day, corrections=None):
     """Group BioTime transactions by employee code and local day, with clock and manual corrections.
 
-    Returns (attendance, door, names): {code: {date: [local datetime]}} for attendance and
-    access-only punches, and {code: BioTime name}. Corrections only apply to days in
-    [first_day, last_day], the days whose punches were all fetched.
+    Returns (attendance, door, names, pauses): {code: {date: [local datetime]}} for attendance and
+    access-only punches, {code: BioTime name} and corrected pauses {code: {date: (start, end)}}.
+    Corrections only apply to days in [first_day, last_day], the days whose punches were all fetched.
     """
     attendance, door = defaultdict(lambda: defaultdict(list)), defaultdict(lambda: defaultdict(list))
-    names, seen = {}, set()
+    names, seen, pauses = {}, set(), defaultdict(dict)
     for txn in txns:
         code = str(txn.get("emp_code") or "").strip()
         if txn.get("id") in seen or not code or not txn.get("punch_time"):
@@ -293,14 +309,17 @@ def group_punches(txns, first_day, last_day, corrections=None):
         if not first_day <= day <= last_day:
             continue
         attendance[code][day] = apply_correction(attendance[code].get(day, []), correction)
+        if "pause_start" in correction:
+            pauses[code][day] = (correction["pause_start"], correction["pause_end"])
         log.info("Correction manuelle appliquée : n°%s le %s", code, day)
-    return attendance, door, names
+    return attendance, door, names, pauses
 
 
-def build_days(code_attendance, code_door, pro=False, today=None):
+def build_days(code_attendance, code_door, pro=False, today=None, code_pauses=None):
     """{date: day summary} for one employee; days before `today` are closed."""
-    today = today or now_local().date()
-    return {day: build_day(code_attendance.get(day, []), day < today, code_door.get(day, []), pro)
+    today, code_pauses = today or now_local().date(), code_pauses or {}
+    return {day: build_day(code_attendance.get(day, []), day < today, code_door.get(day, []), pro,
+                           code_pauses.get(day))
             for day in sorted(set(code_attendance) | set(code_door))}
 
 
@@ -469,7 +488,7 @@ def run(start_time, end_time):
     employees = odoo.employee_map()
     fields = odoo.writable_attendance_fields()
 
-    attendance, door, names = group_punches(biotime.transactions(start_time, end_time),
+    attendance, door, names, pauses = group_punches(biotime.transactions(start_time, end_time),
                                             start_time.date(), end_time.date())
     codes = sorted(set(attendance) | set(door), key=lambda c: (len(c), c))
     log.info("%d employé(s) avec des pointages", len(codes))
@@ -483,7 +502,7 @@ def run(start_time, end_time):
         emp = employees.get(code)
         if not emp:
             continue
-        days = build_days(attendance.get(code, {}), door.get(code, {}), emp["pro"])
+        days = build_days(attendance.get(code, {}), door.get(code, {}), emp["pro"], code_pauses=pauses.get(code))
         try:
             c, u = sync_employee(odoo, emp, days, fields)
             created, updated = created + c, updated + u

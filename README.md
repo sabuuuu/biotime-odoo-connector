@@ -123,9 +123,8 @@ flowchart TD
 | `TERMINAL_RULES_SINCE` | — | Date (`YYYY-MM-DD`) from which `TERMINALS_IGNORE` applies; earlier punches from all terminals count |
 | `SYNC_LOOKBACK_HOURS` | `168` | Hours re-read on every incremental run (covers PCs switched off and offline terminals) |
 | `SYNC_START_DATE` | — | Go-live date (`YYYY-MM-DD`): the incremental sync never imports punches before it |
-| `CLOCK_OFFSET_MINUTES` | `0` | Minutes added to punches when the terminal clock is wrong |
-| `CLOCK_OFFSET_FROM` / `CLOCK_OFFSET_UNTIL` | — | Terminal-time window (`YYYY-MM-DD HH:MM`) where the clock correction applies |
-| `CORRECTIONS_FILE` | `corrections.csv` | Manual corrections: `numero;date;arrivee;depart;commentaire` — replaces the day's arrival and/or departure (see `corrections.example.csv`) |
+| `CLOCK_OFFSETS` | — | Clock corrections when a terminal (or BioTime) time was wrong: `FROM\|UNTIL\|MINUTES` windows in terminal time (`YYYY-MM-DD HH:MM`, UNTIL excluded), separated by `;` |
+| `CORRECTIONS_FILE` | `corrections.csv` | Manual corrections: `numero;date;arrivee;depart;debut_pause;fin_pause;commentaire` — replaces the day's arrival, departure and/or pause (a corrected pause is kept even outside `PAUSE_WINDOW`) |
 
 ---
 

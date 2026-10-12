@@ -7,8 +7,7 @@ from datetime import date, datetime
 os.environ.update({"BIOTIME_TZ": "Africa/Algiers", "DUPLICATE_MINUTES": "2", "PAUSE_WINDOW": "11:30-15:00",
                    "OUTING_TOLERANCE_MINUTES": "10", "DEFAULT_CHECKOUT_TIME": "18:00",
                    "TERMINALS_IGNORE": "DOOR", "TERMINAL_RULES_SINCE": "",
-                   "CLOCK_OFFSET_MINUTES": "60", "CLOCK_OFFSET_FROM": "2026-10-05 00:00",
-                   "CLOCK_OFFSET_UNTIL": "2026-10-05 07:30"})
+                   "CLOCK_OFFSETS": "2026-10-05 00:00|2026-10-05 07:00|120; 2026-10-05 07:00|2026-10-05 07:30|60"})
 import zk_odoo_sync as zk  # noqa: E402
 
 DAY = date(2026, 10, 5)
@@ -96,7 +95,7 @@ class BuildDayTest(unittest.TestCase):
                 {"id": 2, "emp_code": "21", "punch_time": "2026-10-05 08:00:00", "terminal_sn": "INSIDE"},
                 {"id": 2, "emp_code": "21", "punch_time": "2026-10-05 08:00:00", "terminal_sn": "INSIDE"},
                 {"id": 3, "emp_code": "21", "punch_time": "2026-10-05 18:00:00", "terminal_sn": "INSIDE"}]
-        attendance, door, _ = zk.group_punches(txns, DAY, DAY, corrections={})
+        attendance, door, _, _ = zk.group_punches(txns, DAY, DAY, corrections={})
         days = zk.build_days(attendance["21"], door["21"], today=date(2026, 10, 6))
         self.assertEqual((days[DAY]["check_in"], days[DAY]["hours"]), (at("08:00")[0], 10.0))
 
@@ -107,7 +106,8 @@ class BuildDayTest(unittest.TestCase):
 
 class CorrectionTest(unittest.TestCase):
     def test_clock_offset_window(self):
-        self.assertEqual(zk.correct_clock(at("07:07")[0]), at("08:07")[0])
+        self.assertEqual(zk.correct_clock(at("05:38")[0]), at("07:38")[0])  # first window, +2 h
+        self.assertEqual(zk.correct_clock(at("07:07")[0]), at("08:07")[0])  # second window, +1 h
         self.assertEqual(zk.correct_clock(at("10:31")[0]), at("10:31")[0])  # terminals fixed
         self.assertEqual(zk.correct_clock(datetime(2026, 10, 4, 7, 0)), datetime(2026, 10, 4, 7, 0))
 
@@ -119,6 +119,14 @@ class CorrectionTest(unittest.TestCase):
         self.assertEqual(zk.apply_correction(at("08:00", "17:40"), {"departure": at("18:00")[0]}), at("08:00", "18:00"))
         self.assertEqual(zk.apply_correction(at("08:00"), {"departure": at("18:00")[0]}), at("08:00", "18:00"))
 
+    def test_pause_correction_outside_window(self):
+        punches = zk.apply_correction(at("08:26", "11:15", "12:50", "18:45"),
+                                      {"pause_start": at("11:15")[0], "pause_end": at("12:46")[0]})
+        self.assertEqual(punches, at("08:26", "11:15", "12:46", "18:45"))
+        d = zk.build_day(punches, closed=True, forced_pause=tuple(at("11:15", "12:46")))
+        self.assertEqual((d["pause_start"], d["pause_end"], d["outings_count"]), (*at("11:15", "12:46"), 0))
+        self.assertEqual(d["hours"], 8.8)  # 10h19 - 1h31 = 8h48
+
     def test_corrections_file_and_window(self):
         import tempfile
         from pathlib import Path
@@ -128,7 +136,7 @@ class CorrectionTest(unittest.TestCase):
                             "6;2026-10-01;07:55;;hors période\n", encoding="utf-8")
             corrections = zk.load_corrections(path)
         txns = [{"id": 1, "emp_code": "5", "punch_time": "2026-10-05 07:07:14", "terminal_sn": "INSIDE"}]
-        attendance, _, _ = zk.group_punches(txns, DAY, DAY, corrections)
+        attendance, _, _, _ = zk.group_punches(txns, DAY, DAY, corrections)
         self.assertEqual(attendance["5"][DAY], at("08:00"))
         self.assertNotIn(date(2026, 10, 1), attendance["6"])
 

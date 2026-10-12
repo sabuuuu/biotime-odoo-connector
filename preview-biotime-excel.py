@@ -69,7 +69,7 @@ def main():
     txns = sorted({t["id"]: t for t in biotime.transactions(start, end)}.values(),
                   key=lambda t: (str(t.get("emp_code")), t.get("punch_time") or ""))
     print(f"{len(txns)} pointages récupérés.")
-    attendance, door, names = zk.group_punches(txns, start.date(), end.date())
+    attendance, door, names, pauses = zk.group_punches(txns, start.date(), end.date())
 
     try:
         employees = zk.Odoo().employee_map()
@@ -94,7 +94,7 @@ def main():
         emp = employees.get(code)
         odoo_name = emp["name"] if emp else ("INTROUVABLE" if employees else "")
         pro = bool(emp and emp["pro"])
-        days = zk.build_days(attendance.get(code, {}), door.get(code, {}), pro)
+        days = zk.build_days(attendance.get(code, {}), door.get(code, {}), pro, code_pauses=pauses.get(code))
         total, total_gap, with_anomaly = 0.0, 0.0, 0
         for day, d in days.items():
             expected = DAILY_HOURS if day.weekday() in WORK_DAYS else 0.0
