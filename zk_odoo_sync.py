@@ -55,6 +55,8 @@ DUPLICATE_MINUTES = float(os.environ.get("DUPLICATE_MINUTES", "2"))
 PAUSE_WINDOW = os.environ.get("PAUSE_WINDOW", "11:30-15:00")
 # Outings up to this duration are not deducted (quick errand)
 OUTING_TOLERANCE_MINUTES = float(os.environ.get("OUTING_TOLERANCE_MINUTES", "10"))
+# Working days (0 = Monday). Outside them, a door-only day creates no attendance
+WORK_DAYS = {int(d) for d in os.environ.get("WORK_DAYS", "0,1,2,3").split(",") if d.strip()}
 # Departure used when the last departure of the day was not punched
 DEFAULT_CHECKOUT_TIME = os.environ.get("DEFAULT_CHECKOUT_TIME", "18:00")
 
@@ -158,8 +160,9 @@ def correct_clock(punch):
 def load_corrections(path=None):
     """Read manual corrections: {(code, date): {"arrival", "departure", "pause_start", "pause_end": datetime}}.
 
-    CSV (';' separated, Excel-friendly): numero;date;arrivee;depart;debut_pause;fin_pause;commentaire
-    (debut_pause / fin_pause are optional columns, to be given together)
+    CSV (';' separated, Excel-friendly): numero;date;arrivee;depart;debut_pause;fin_pause;ignorer_de;ignorer_a;commentaire
+    (optional column pairs, to be given together: debut_pause / fin_pause impose the pause,
+    ignorer_de / ignorer_a drop every punch of the employee in that time range, door included)
     """
     path = path or CORRECTIONS_FILE
     corrections = {}
@@ -171,11 +174,16 @@ def load_corrections(path=None):
                 code, day = row["numero"].strip(), datetime.strptime(row["date"].strip(), "%Y-%m-%d").date()
                 entry = {}
                 for key, col in (("arrival", "arrivee"), ("departure", "depart"),
-                                 ("pause_start", "debut_pause"), ("pause_end", "fin_pause")):
+                                 ("pause_start", "debut_pause"), ("pause_end", "fin_pause"),
+                                 ("ignore_from", "ignorer_de"), ("ignore_to", "ignorer_a")):
                     if (row.get(col) or "").strip():
                         entry[key] = datetime.combine(day, datetime.strptime(row[col].strip(), "%H:%M").time())
                 if ("pause_start" in entry) != ("pause_end" in entry):
                     raise ValueError("debut_pause et fin_pause doivent être renseignés ensemble")
+                if ("ignore_from" in entry) != ("ignore_to" in entry):
+                    raise ValueError("ignorer_de et ignorer_a doivent être renseignés ensemble")
+                if "ignore_to" in entry:  # the end minute is included
+                    entry["ignore_to"] += timedelta(seconds=59)
             except (KeyError, ValueError, AttributeError) as e:
                 log.warning("%s ligne %d ignorée (format attendu numero;date;arrivee;depart;debut_pause;fin_pause) : %s",
                             path.name, i, e)
@@ -329,7 +337,16 @@ def group_punches(txns, first_day, last_day, corrections=None):
     for (code, day), correction in (load_corrections() if corrections is None else corrections).items():
         if not first_day <= day <= last_day:
             continue
-        attendance[code][day] = apply_correction(attendance[code].get(day, []), correction)
+        if "ignore_from" in correction:  # test punches: drop them, door included
+            for punches in (attendance, door):
+                kept = [p for p in punches[code].get(day, [])
+                        if not correction["ignore_from"] <= p <= correction["ignore_to"]]
+                if kept:
+                    punches[code][day] = kept
+                else:
+                    punches[code].pop(day, None)
+        if correction.keys() - {"ignore_from", "ignore_to"}:
+            attendance[code][day] = apply_correction(attendance[code].get(day, []), correction)
         corrected[code][day] = correction
         log.info("Correction manuelle appliquée : n°%s le %s", code, day)
     return attendance, door, names, corrected
@@ -340,6 +357,8 @@ def build_days(code_attendance, code_door, pro=False, today=None, code_correctio
     today, code_corrections = today or now_local().date(), code_corrections or {}
     days = {}
     for day in sorted(set(code_attendance) | set(code_door)):
+        if not code_attendance.get(day) and day.weekday() not in WORK_DAYS:
+            continue  # only passed the door on a non-working day: not worked
         correction = code_corrections.get(day, {})
         pause = (correction["pause_start"], correction["pause_end"]) if "pause_start" in correction else None
         days[day] = build_day(code_attendance.get(day, []), day < today, code_door.get(day, []), pro,
@@ -528,6 +547,8 @@ def run(start_time, end_time):
             continue
         days = build_days(attendance.get(code, {}), door.get(code, {}), emp["pro"],
                           code_corrections=corrected.get(code))
+        if not days:  # every punch ignored (test punches)
+            continue
         try:
             c, u = sync_employee(odoo, emp, days, fields)
             created, updated = created + c, updated + u

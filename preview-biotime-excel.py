@@ -31,7 +31,6 @@ RAW_COLUMNS = [
 WARN_FILL = PatternFill("solid", fgColor="FFF2CC")
 DAYS_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
-WORK_DAYS = {int(d) for d in os.environ.get("WORK_DAYS", "0,1,2,3").split(",")}
 DAILY_HOURS = float(os.environ.get("DAILY_HOURS", "9"))
 
 
@@ -97,7 +96,7 @@ def main():
         days = zk.build_days(attendance.get(code, {}), door.get(code, {}), pro, code_corrections=corrected.get(code))
         total, total_gap, with_anomaly = 0.0, 0.0, 0
         for day, d in days.items():
-            expected = DAILY_HOURS if day.weekday() in WORK_DAYS else 0.0
+            expected = DAILY_HOURS if day.weekday() in zk.WORK_DAYS else 0.0
             gap = round(d["hours"] - expected, 2) if d["check_out"] and not d["anomaly"] else ""
             total += d["hours"]
             total_gap += gap or 0.0

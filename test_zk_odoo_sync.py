@@ -6,7 +6,7 @@ from datetime import date, datetime
 # Fixed settings so the tests do not depend on the local .env
 os.environ.update({"BIOTIME_TZ": "Africa/Algiers", "DUPLICATE_MINUTES": "2", "PAUSE_WINDOW": "11:30-15:00",
                    "OUTING_TOLERANCE_MINUTES": "10", "DEFAULT_CHECKOUT_TIME": "18:00",
-                   "TERMINALS_IGNORE": "DOOR", "TERMINAL_RULES_SINCE": "",
+                   "TERMINALS_IGNORE": "DOOR", "TERMINAL_RULES_SINCE": "", "WORK_DAYS": "0,1,2,3",
                    "CLOCK_OFFSETS": "2026-10-05 00:00|2026-10-05 07:00|120; 2026-10-05 07:00|2026-10-05 07:30|60"})
 import zk_odoo_sync as zk  # noqa: E402
 
@@ -86,6 +86,14 @@ class BuildDayTest(unittest.TestCase):
         d = zk.build_day(at("13:07", "13:48"), closed=False, door_punches=at("08:04"), door_arrival=False)
         self.assertEqual(d["check_in"], at("13:07")[0])
 
+    def test_door_only_non_working_day_skipped(self):
+        friday = date(2026, 10, 16)
+        door = {friday: [datetime(2026, 10, 16, 15, 9)]}
+        self.assertEqual(zk.build_days({}, door, today=date(2026, 10, 20)), {})
+        # real punches on a non-working day are kept (overtime)
+        attendance = {friday: [datetime(2026, 10, 16, 15, 0), datetime(2026, 10, 16, 17, 0)]}
+        self.assertEqual(zk.build_days(attendance, door, today=date(2026, 10, 20))[friday]["hours"], 2.0)
+
     def test_missing_departure_set_to_18h(self):
         d = zk.build_day(at("08:00", "12:30", "13:30"), closed=True)
         self.assertEqual((d["check_out"], d["hours"]), (at("18:00")[0], 9.0))
@@ -163,6 +171,18 @@ class CorrectionTest(unittest.TestCase):
         punches = zk.apply_correction(at("07:22", "12:56", "13:36", "13:59", "18:09"),
                                       {"pause_start": at("13:56")[0], "pause_end": at("14:50")[0]})
         self.assertEqual(punches, at("07:22", "12:56", "13:36", "13:56", "14:50", "18:09"))
+
+    def test_ignored_test_punches(self):
+        txns = [{"id": 1, "emp_code": "1", "punch_time": "2026-10-05 09:31:18", "terminal_sn": "DOOR"},
+                {"id": 2, "emp_code": "1", "punch_time": "2026-10-05 11:13:28", "terminal_sn": "INSIDE"},
+                {"id": 3, "emp_code": "1", "punch_time": "2026-10-05 11:13:50", "terminal_sn": "DOOR"},
+                {"id": 4, "emp_code": "15", "punch_time": "2026-10-05 11:13:05", "terminal_sn": "INSIDE"}]
+        ignore = {"ignore_from": at("11:10")[0], "ignore_to": datetime(2026, 10, 5, 11, 14, 59)}
+        attendance, door, _, _ = zk.group_punches(txns, DAY, DAY, {("1", DAY): ignore, ("15", DAY): dict(ignore)})
+        self.assertEqual((attendance["1"].get(DAY), door["1"][DAY]), (None, [datetime(2026, 10, 5, 9, 31, 18)]))
+        self.assertNotIn(DAY, attendance["15"])
+        days = zk.build_days(attendance["1"], door["1"], today=date(2026, 10, 6))
+        self.assertIn("aucun pointage sur la pointeuse intérieure", days[DAY]["anomaly"])
 
     def test_corrections_file_and_window(self):
         import tempfile

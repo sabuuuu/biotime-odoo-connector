@@ -118,13 +118,13 @@ flowchart TD
 | `PAUSE_WINDOW` | `11:30-15:00` | The pause is the longest outing starting in this window; other outings are "sorties" |
 | `OUTING_TOLERANCE_MINUTES` | `10` | Outings up to this duration are not deducted (quick errand) |
 | `DEFAULT_CHECKOUT_TIME` | `18:00` | Departure used when the last departure of the day was not punched |
-| `WORK_DAYS` / `DAILY_HOURS` | `0,1,2,3` / `9` | Expected schedule, used by the Excel preview to show the gap vs expected hours |
+| `WORK_DAYS` / `DAILY_HOURS` | `0,1,2,3` / `9` | Working days (0 = Monday) and expected hours. Outside working days, only days with attendance punches are synced (a door-only day creates nothing); the Excel preview shows the gap vs expected hours |
 | `TERMINALS_IGNORE` | — | Comma-separated serial numbers of access-only terminals (door opening); their punches are ignored for attendance and reported when they are the only punch of the day |
 | `TERMINAL_RULES_SINCE` | — | Date (`YYYY-MM-DD`) from which `TERMINALS_IGNORE` applies; earlier punches from all terminals count |
 | `SYNC_LOOKBACK_HOURS` | `168` | Hours re-read on every incremental run (covers PCs switched off and offline terminals) |
 | `SYNC_START_DATE` | — | Go-live date (`YYYY-MM-DD`): the incremental sync never imports punches before it |
 | `CLOCK_OFFSETS` | — | Clock corrections when a terminal (or BioTime) time was wrong: `FROM\|UNTIL\|MINUTES` windows in terminal time (`YYYY-MM-DD HH:MM`, UNTIL excluded), separated by `;` |
-| `CORRECTIONS_FILE` | `corrections.csv` | Manual corrections: `numero;date;arrivee;depart;debut_pause;fin_pause;commentaire` — replaces the day's arrival, departure and/or pause (a corrected pause is kept even outside `PAUSE_WINDOW`) |
+| `CORRECTIONS_FILE` | `corrections.csv` | Manual corrections: `numero;date;arrivee;depart;debut_pause;fin_pause;ignorer_de;ignorer_a;commentaire` — replaces the day's arrival, departure and/or pause (a corrected pause is kept even outside `PAUSE_WINDOW`); `ignorer_de`/`ignorer_a` drop every punch of the employee in that time range, door included (test punches) |
 
 ---
 
