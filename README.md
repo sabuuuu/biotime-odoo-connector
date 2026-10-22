@@ -116,6 +116,7 @@ flowchart TD
 | `ODOO_COMPANY` | — | Company whose employees are synced (multi-company databases); empty = all companies of the API user |
 | `DUPLICATE_MINUTES` | `2` | Ignore consecutive swipes within this number of minutes |
 | `PAUSE_WINDOW` | `11:30-15:00` | The pause is the longest outing starting in this window; other outings are "sorties" |
+| `MORNING_BREAK_WINDOW` / `AFTERNOON_BREAK_WINDOW` | `08:00-11:30` / `15:00-18:00` | Short breaks (outings other than the lunch pause) starting in these windows are totalled in minutes in `x_studio_pause_matin_1` / `x_studio_pause_aprem_1` (text, e.g. `12 min`; a numeric field gets the number) |
 | `OUTING_TOLERANCE_MINUTES` | `10` | Outings up to this duration are not deducted (quick errand) |
 | `DEFAULT_CHECKOUT_TIME` | `18:00` | Departure used when the last departure of the day was not punched |
 | `WORK_DAYS` / `DAILY_HOURS` | `0,1,2,3` / `9` | Working days (0 = Monday) and expected hours. Outside working days, only days with attendance punches are synced (a door-only day creates nothing); the Excel preview shows the gap vs expected hours |
@@ -146,6 +147,9 @@ HR only reads these records in Odoo: the sync is the only writer.
   `x_studio_sorties_professionnelles` checked (on `hr.employee`).
 - Door passed in the morning (before `PAUSE_WINDOW`) with no attendance punch until the pause window,
   more than 30 min later: the door punch is taken as the arrival (unless the arrival is corrected manually).
+- Out for the pause (exit within `PAUSE_WINDOW`), back through the door, return not punched inside within
+  30 min while a punch is really missing (odd count once the day is over, or still out during the day):
+  the door punch is taken as the end of the pause (unless the pause is corrected manually).
 - Anomalies (missing departure, door-only day…) go to the log and to the Excel preview.
 - Missing Studio fields are skipped with a warning; a field computed in Studio is never written by the script.
   Days with several records in Odoo are left untouched.

@@ -103,7 +103,8 @@ def main():
             with_anomaly += bool(d["anomaly"])
             rows.append([code, names[code], odoo_name, "oui" if pro else "", day.isoformat(), DAYS_FR[day.weekday()],
                          hhmm(d["check_in"]), hhmm(d["pause_start"]), hhmm(d["pause_end"]),
-                         hhmm(d["check_out"]) or "en cours", d["outings_count"], d["outings_hours"],
+                         hhmm(d["check_out"]) or "en cours", d["morning_breaks"], d["afternoon_breaks"],
+                         d["outings_count"], d["outings_hours"],
                          d["hours"], expected, gap, d["detail"], d["anomaly"]])
             if d["anomaly"]:
                 anomalies.append([code, names[code], day.isoformat(), DAYS_FR[day.weekday()], d["anomaly"], d["detail"]])
@@ -114,8 +115,9 @@ def main():
     add_sheet(wb, "Présences Odoo (1 par jour)",
               ["Numéro d'employé", "Nom BioTime", "Employé Odoo", "Sorties pro", "Date", "Jour",
                "Arrivée (check_in)", "Début pause", "Fin pause", "Départ (check_out)",
+               "Pauses matin (min)", "Pauses aprem (min)",
                "Nb sorties", "Sorties déduites (h)", "Heures travaillées", "Heures prévues", "Écart",
-               "Détail des pointages", "Anomalie"], rows, warn_col=16)
+               "Détail des pointages", "Anomalie"], rows, warn_col=18)
     add_sheet(wb, "Anomalies", ["Numéro d'employé", "Nom", "Date", "Jour", "Anomalie", "Détail des pointages"],
               anomalies)
     add_sheet(wb, "Résumé par employé",

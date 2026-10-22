@@ -35,6 +35,23 @@ class BuildDayTest(unittest.TestCase):
         self.assertEqual((d["outings_count"], d["outings_hours"]), (2, 0.67))  # 8 min free, 40 min deducted
         self.assertEqual(d["hours"], 10 - 1 - 0.67)
 
+    def test_short_breaks_minutes_by_window(self):
+        d = zk.build_day(at("08:00", "10:00", "10:03", "10:30", "10:35", "12:30", "13:30",
+                            "16:00", "16:10", "18:00"), closed=True)
+        self.assertEqual((d["morning_breaks"], d["afternoon_breaks"]), (8, 10))  # 3 + 5 min, 10 min
+        self.assertEqual((d["pause_start"], d["pause_end"]), tuple(at("12:30", "13:30")))
+        self.assertEqual(d["hours"], 9.0)  # tests use a 10 min tolerance: these short breaks are not deducted
+        d = zk.build_day(at("08:00", "12:30", "13:30", "18:00"), closed=True)
+        self.assertEqual((d["morning_breaks"], d["afternoon_breaks"]), (0, 0))
+
+    def test_break_minutes_as_text_or_number(self):
+        d = zk.build_day(at("08:00", "10:00", "10:12", "18:00"), closed=True)
+        fields = {"morning_breaks": "x_m", "afternoon_breaks": "x_a"}
+        vals = zk.attendance_values(d, fields, {"morning_breaks": "char", "afternoon_breaks": "char"})
+        self.assertEqual((vals["x_m"], vals["x_a"]), ("12 min", False))
+        vals = zk.attendance_values(d, fields, {"morning_breaks": "float", "afternoon_breaks": "float"})
+        self.assertEqual((vals["x_m"], vals["x_a"]), (12.0, 0.0))
+
     def test_pro_outings_count_as_work(self):
         d = zk.build_day(at("08:00", "10:00", "11:00", "12:30", "13:30", "18:00"), closed=True, pro=True)
         self.assertEqual((d["outings_hours"], d["hours"]), (1.0, 9.0))  # only the pause is deducted
@@ -94,6 +111,28 @@ class BuildDayTest(unittest.TestCase):
         attendance = {friday: [datetime(2026, 10, 16, 15, 0), datetime(2026, 10, 16, 17, 0)]}
         self.assertEqual(zk.build_days(attendance, door, today=date(2026, 10, 20))[friday]["hours"], 2.0)
 
+    def test_door_return_from_pause(self):
+        d = zk.build_day(at("09:41", "12:34", "18:10"), closed=True, door_punches=at("09:41", "13:47"))
+        self.assertEqual((d["pause_start"], d["pause_end"], d["check_out"]), tuple(at("12:34", "13:47", "18:10")))
+        self.assertIn("porte 13:47 retenue", d["anomaly"])
+        # day in progress: back from the pause, no departure yet
+        d = zk.build_day(at("09:41", "12:34"), closed=False, door_punches=at("13:47"))
+        self.assertEqual((d["pause_end"], d["check_out"]), (at("13:47")[0], None))
+
+    def test_door_return_not_used_when_return_punched(self):
+        d = zk.build_day(at("08:00", "12:30", "13:31", "18:00"), closed=True, door_punches=at("08:00", "13:30"))
+        self.assertEqual((d["pause_end"], d["anomaly"]), (at("13:31")[0], ""))
+
+    def test_door_return_not_used_when_return_punched_late(self):
+        # back through the door at 13:10, return punched inside at 14:00: complete day, kept as is
+        d = zk.build_day(at("07:50", "12:57", "14:00", "18:09"), closed=True, door_punches=at("07:49", "13:10"))
+        self.assertEqual((d["pause_start"], d["pause_end"], d["hours"], d["anomaly"]),
+                         (*at("12:57", "14:00"), 9.27, ""))
+
+    def test_door_return_ignores_exits_outside_pause_window(self):
+        d = zk.build_day(at("08:00", "12:30", "13:30", "18:00"), closed=True, door_punches=at("18:30"))
+        self.assertEqual((d["check_out"], d["anomaly"]), (at("18:00")[0], ""))
+
     def test_missing_departure_set_to_18h(self):
         d = zk.build_day(at("08:00", "12:30", "13:30"), closed=True)
         self.assertEqual((d["check_out"], d["hours"]), (at("18:00")[0], 9.0))
@@ -113,6 +152,7 @@ class BuildDayTest(unittest.TestCase):
         d = zk.build_day([], closed=True, door_punches=at("08:02", "13:40"))
         self.assertEqual((d["check_in"], d["check_out"], d["hours"]), (at("08:02")[0], at("08:02")[0], 0.0))
         self.assertIn("aucun pointage sur la pointeuse intérieure", d["anomaly"])
+        self.assertEqual(zk.attendance_values(d, {"morning_breaks": "x_m"})["x_m"], 0.0)
 
     def test_door_punches_ignored_when_inside_punches_exist(self):
         txns = [{"id": 1, "emp_code": "21", "punch_time": "2026-10-05 07:59:00", "terminal_sn": "DOOR"},

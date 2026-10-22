@@ -53,6 +53,9 @@ LOCAL_TZ = ZoneInfo(os.environ.get("BIOTIME_TZ", "Europe/Paris"))
 DUPLICATE_MINUTES = float(os.environ.get("DUPLICATE_MINUTES", "2"))
 # The pause is the longest outing starting within this window; other outings are "sorties"
 PAUSE_WINDOW = os.environ.get("PAUSE_WINDOW", "11:30-15:00")
+# Short breaks (outings other than the lunch pause), totalled in minutes per window
+MORNING_BREAK_WINDOW = os.environ.get("MORNING_BREAK_WINDOW", "08:00-11:30")
+AFTERNOON_BREAK_WINDOW = os.environ.get("AFTERNOON_BREAK_WINDOW", "15:00-18:00")
 # Outings up to this duration are not deducted (quick errand)
 OUTING_TOLERANCE_MINUTES = float(os.environ.get("OUTING_TOLERANCE_MINUTES", "10"))
 # Working days (0 = Monday). Outside them, a door-only day creates no attendance
@@ -79,6 +82,8 @@ ATTENDANCE_FIELDS = {
     "pause_start": "x_studio_debut_pause",
     "pause_end": "x_studio_fin_pause",
     "hours": "x_studio_heures_travailles",
+    "morning_breaks": "x_studio_pause_matin_1",  # text fields ("12 min")
+    "afternoon_breaks": "x_studio_pause_aprem_1",
 }
 # On hr.employee: outings count as work time (managers, client visits)
 PRO_OUTINGS_FIELD = "x_studio_sorties_professionnelles"
@@ -93,6 +98,8 @@ def _parse_window(value):
 
 
 PAUSE_START, PAUSE_END = _parse_window(PAUSE_WINDOW)
+MORNING_BREAKS = _parse_window(MORNING_BREAK_WINDOW)
+AFTERNOON_BREAKS = _parse_window(AFTERNOON_BREAK_WINDOW)
 DEFAULT_CHECKOUT = datetime.strptime(DEFAULT_CHECKOUT_TIME, "%H:%M").time()
 
 
@@ -243,7 +250,8 @@ def _hours(start, end):
 DOOR_ARRIVAL_GAP = timedelta(minutes=30)
 
 
-def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, door_arrival=True):
+def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, door_arrival=True,
+              door_return=True):
     """Summarize one employee's day into the values of a single hr.attendance.
 
     punches      : local datetimes on the attendance terminal, alternating in / out
@@ -253,6 +261,7 @@ def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, do
     pro          : outings count as work time, only the pause is deducted
     forced_pause : (start, end) from a manual correction, used as the pause whatever PAUSE_WINDOW
     door_arrival : False when the arrival was corrected manually (the correction wins)
+    door_return  : False when the pause was corrected manually (the correction wins)
     """
     duplicate = timedelta(minutes=DUPLICATE_MINUTES)
     kept = []
@@ -264,6 +273,7 @@ def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, do
         first = min(door_punches)
         return {"check_in": first, "check_out": first if closed else None, "pause_start": None,
                 "pause_end": None, "outings": [], "outings_count": 0, "outings_hours": 0.0,
+                "morning_breaks": 0, "afternoon_breaks": 0,
                 "hours": 0.0, "detail": "", "anomaly": DOOR_ONLY_MSG.format(f"{first:%H:%M}")}
 
     anomalies = []
@@ -274,6 +284,23 @@ def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, do
         kept.insert(0, first_door)
         anomalies.append(f"arrivée non pointée à l'intérieur : porte {first_door:%H:%M} retenue")
 
+    # Out for the pause (inside punch), back through the door, return not punched inside within
+    # 30 min: the door punch is the end of the pause. Only when a punch is really missing (odd
+    # count once the day is over, or still "out" while the day is in progress): many people pass
+    # the door and punch their return inside later.
+    if door_return:
+        for i in range(1, len(kept), 2):  # odd positions are exits
+            if not PAUSE_START <= kept[i].time() < PAUSE_END:
+                continue
+            following = kept[i + 1] if i + 1 < len(kept) else None
+            if not (len(kept) % 2 == 1 if closed else following is None):
+                continue
+            back = [d for d in sorted(door_punches) if kept[i] < d and (following is None or d < following)]
+            if back and (following is None or following - back[0] > DOOR_ARRIVAL_GAP):
+                kept.insert(i + 1, back[0])
+                anomalies.append(f"retour de pause non pointé à l'intérieur : porte {back[0]:%H:%M} retenue")
+                break
+
     # in/out pairs, then the gaps between them (time spent outside)
     segments = [(kept[i], kept[i + 1] if i + 1 < len(kept) else None) for i in range(0, len(kept), 2)]
     gaps = [(segments[i][1], segments[i + 1][0]) for i in range(len(segments) - 1)]
@@ -282,6 +309,9 @@ def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, do
     outings = [g for g in gaps if g is not pause]
     tolerance = timedelta(minutes=OUTING_TOLERANCE_MINUTES)
     outings_hours = sum(_hours(a, b) for a, b in outings if b - a > tolerance)
+    # minutes of short breaks, by the window they start in (several small breaks add up)
+    break_minutes = lambda window: round(sum((b - a).total_seconds() for a, b in outings
+                                             if window[0] <= a.time() < window[1]) / 60)
 
     check_out = None
     # Day in progress, out during the pause window with no pause yet: lunch break, not departure
@@ -311,6 +341,8 @@ def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, do
         "outings": outings,
         "outings_count": len(outings),
         "outings_hours": round(outings_hours, 2),
+        "morning_breaks": break_minutes(MORNING_BREAKS),
+        "afternoon_breaks": break_minutes(AFTERNOON_BREAKS),
         "hours": round(max(hours, 0.0), 2),
         "detail": detail,
         "anomaly": "; ".join(anomalies),
@@ -362,15 +394,26 @@ def build_days(code_attendance, code_door, pro=False, today=None, code_correctio
         correction = code_corrections.get(day, {})
         pause = (correction["pause_start"], correction["pause_end"]) if "pause_start" in correction else None
         days[day] = build_day(code_attendance.get(day, []), day < today, code_door.get(day, []), pro,
-                              pause, door_arrival="arrival" not in correction)
+                              pause, door_arrival="arrival" not in correction,
+                              door_return="pause_start" not in correction)
     return days
 
 
-def attendance_values(day, fields):
+def _minutes_value(minutes, field_type):
+    """Break minutes for a numeric field (12.0) or a text field ("12 min", empty without break)."""
+    if field_type in ("char", "text"):
+        return f"{minutes} min" if minutes else False
+    return float(minutes)
+
+
+def attendance_values(day, fields, field_types=None):
     """hr.attendance values (UTC) for a day summary, limited to the writable Studio fields."""
     utc = lambda d: local_dt_to_utc(d).strftime(FMT) if d else False
+    types = field_types or {}
     vals = {"check_in": utc(day["check_in"]), "check_out": utc(day["check_out"])}
-    data = {"pause_start": utc(day["pause_start"]), "pause_end": utc(day["pause_end"]), "hours": day["hours"]}
+    data = {"pause_start": utc(day["pause_start"]), "pause_end": utc(day["pause_end"]), "hours": day["hours"],
+            "morning_breaks": _minutes_value(day["morning_breaks"], types.get("morning_breaks")),
+            "afternoon_breaks": _minutes_value(day["afternoon_breaks"], types.get("afternoon_breaks"))}
     for key, value in data.items():
         if key in fields:
             vals[fields[key]] = value
@@ -475,8 +518,8 @@ class Odoo:
         defs = {f["name"]: f for f in self.call("ir.model.fields", "search_read",
                                                 [["model", "=", "hr.attendance"],
                                                  ["name", "in", list(ATTENDANCE_FIELDS.values())]],
-                                                fields=["name", "compute"])}
-        fields = {}
+                                                fields=["name", "compute", "ttype"])}
+        fields, self.field_types = {}, {}
         for key, name in ATTENDANCE_FIELDS.items():
             if name not in defs:
                 log.warning("Champ %s absent de hr.attendance : non synchronisé", name)
@@ -484,6 +527,7 @@ class Odoo:
                 log.info("Champ %s calculé par Odoo : non écrit par le script", name)
             else:
                 fields[key] = name
+                self.field_types[key] = defs[name]["ttype"]
         return fields
 
 
@@ -509,7 +553,7 @@ def sync_employee(odoo, emp, days, fields):
             log.warning("%s %s : %d présences dans Odoo pour ce jour, non modifiées (à fusionner à la main)",
                         emp["name"], day, len(records))
             continue
-        vals = attendance_values(summary, fields)
+        vals = attendance_values(summary, fields, getattr(odoo, "field_types", None))
         if not records:
             odoo.call("hr.attendance", "create", [{"employee_id": emp["id"], **vals}])
             created += 1
