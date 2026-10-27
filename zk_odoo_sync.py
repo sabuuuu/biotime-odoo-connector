@@ -82,6 +82,7 @@ ATTENDANCE_FIELDS = {
     "pause_start": "x_studio_debut_pause",
     "pause_end": "x_studio_fin_pause",
     "hours": "x_studio_heures_travailles",
+    "pause_hours": "x_studio_duree_pause_dej",  # lunch pause duration (hours, float_time widget)
     "morning_breaks": "x_studio_pause_matin_1",  # text fields ("12 min")
     "afternoon_breaks": "x_studio_pause_aprem_1",
 }
@@ -273,7 +274,7 @@ def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, do
         first = min(door_punches)
         return {"check_in": first, "check_out": first if closed else None, "pause_start": None,
                 "pause_end": None, "outings": [], "outings_count": 0, "outings_hours": 0.0,
-                "morning_breaks": 0, "afternoon_breaks": 0,
+                "morning_breaks": 0, "afternoon_breaks": 0, "pause_hours": 0.0,
                 "hours": 0.0, "detail": "", "anomaly": DOOR_ONLY_MSG.format(f"{first:%H:%M}")}
 
     anomalies = []
@@ -343,6 +344,7 @@ def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, do
         "outings_hours": round(outings_hours, 2),
         "morning_breaks": break_minutes(MORNING_BREAKS),
         "afternoon_breaks": break_minutes(AFTERNOON_BREAKS),
+        "pause_hours": round(_hours(*pause), 4) if pause and pause[1] else 0.0,
         "hours": round(max(hours, 0.0), 2),
         "detail": detail,
         "anomaly": "; ".join(anomalies),
@@ -413,7 +415,8 @@ def attendance_values(day, fields, field_types=None):
     vals = {"check_in": utc(day["check_in"]), "check_out": utc(day["check_out"])}
     data = {"pause_start": utc(day["pause_start"]), "pause_end": utc(day["pause_end"]), "hours": day["hours"],
             "morning_breaks": _minutes_value(day["morning_breaks"], types.get("morning_breaks")),
-            "afternoon_breaks": _minutes_value(day["afternoon_breaks"], types.get("afternoon_breaks"))}
+            "afternoon_breaks": _minutes_value(day["afternoon_breaks"], types.get("afternoon_breaks")),
+            "pause_hours": day["pause_hours"]}
     for key, value in data.items():
         if key in fields:
             vals[fields[key]] = value

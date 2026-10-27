@@ -25,6 +25,13 @@ class BuildDayTest(unittest.TestCase):
         self.assertEqual(d["hours"], 9.15)  # 10h04 - 55 min
         self.assertEqual((d["outings_count"], d["anomaly"]), (0, ""))
 
+    def test_lunch_pause_duration(self):
+        d = zk.build_day(at("08:01", "12:30", "13:15", "18:05"), closed=True)
+        self.assertEqual(d["pause_hours"], 0.75)  # 12:30 -> 13:15
+        self.assertEqual(zk.attendance_values(d, {"pause_hours": "x_p"})["x_p"], 0.75)
+        self.assertEqual(zk.build_day(at("08:00", "12:30"), closed=False)["pause_hours"], 0.0)  # in progress
+        self.assertEqual(zk.build_day(at("08:00", "18:00"), closed=True)["pause_hours"], 0.0)  # no pause
+
     def test_no_pause_punched_deducts_nothing(self):
         d = zk.build_day(at("08:00", "18:00"), closed=True)
         self.assertEqual((d["pause_start"], d["hours"]), (None, 10.0))
