@@ -56,10 +56,14 @@ PAUSE_WINDOW = os.environ.get("PAUSE_WINDOW", "11:30-15:00")
 # Short breaks (outings other than the lunch pause), totalled in minutes per window
 MORNING_BREAK_WINDOW = os.environ.get("MORNING_BREAK_WINDOW", "08:00-11:30")
 AFTERNOON_BREAK_WINDOW = os.environ.get("AFTERNOON_BREAK_WINDOW", "15:00-18:00")
-# Outings up to this duration are not deducted (quick errand)
+# Short breaks are shown but count as work time unless DEDUCT_OUTINGS=1
+DEDUCT_OUTINGS = os.environ.get("DEDUCT_OUTINGS", "0").strip().lower() in ("1", "true", "oui", "yes")
+# When deducted, outings up to this duration are not (quick errand)
 OUTING_TOLERANCE_MINUTES = float(os.environ.get("OUTING_TOLERANCE_MINUTES", "10"))
 # Working days (0 = Monday). Outside them, a door-only day creates no attendance
 WORK_DAYS = {int(d) for d in os.environ.get("WORK_DAYS", "0,1,2,3").split(",") if d.strip()}
+# Expected work time of a working day: worked hours beyond it are overtime (non-working days: all)
+DAILY_HOURS = float(os.environ.get("DAILY_HOURS", "9"))
 # Departure used when the last departure of the day was not punched
 DEFAULT_CHECKOUT_TIME = os.environ.get("DEFAULT_CHECKOUT_TIME", "18:00")
 
@@ -85,6 +89,7 @@ ATTENDANCE_FIELDS = {
     "pause_hours": "x_studio_duree_pause_dej",  # lunch pause duration (hours, float_time widget)
     "morning_breaks": "x_studio_pause_matin_1",  # text fields ("12 min")
     "afternoon_breaks": "x_studio_pause_aprem_1",
+    "overtime": "x_studio_heures_sup",  # worked hours - DAILY_HOURS (negative = hours missing)
 }
 # On hr.employee: outings count as work time (managers, client visits)
 PRO_OUTINGS_FIELD = "x_studio_sorties_professionnelles"
@@ -275,7 +280,7 @@ def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, do
         return {"check_in": first, "check_out": first if closed else None, "pause_start": None,
                 "pause_end": None, "outings": [], "outings_count": 0, "outings_hours": 0.0,
                 "morning_breaks": 0, "afternoon_breaks": 0, "pause_hours": 0.0,
-                "hours": 0.0, "detail": "", "anomaly": DOOR_ONLY_MSG.format(f"{first:%H:%M}")}
+                "hours": 0.0, "overtime": 0.0, "detail": "", "anomaly": DOOR_ONLY_MSG.format(f"{first:%H:%M}")}
 
     anomalies = []
     # Door passed in the morning, nothing inside before the pause window: inside arrival forgotten
@@ -330,7 +335,10 @@ def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, do
 
     hours = 0.0
     if check_out:
-        hours = _hours(kept[0], check_out) - (_hours(*pause) if pause else 0.0) - (0.0 if pro else outings_hours)
+        hours = (_hours(kept[0], check_out) - (_hours(*pause) if pause else 0.0)
+                 - (outings_hours if DEDUCT_OUTINGS and not pro else 0.0))
+    hours = round(max(hours, 0.0), 2)
+    expected = DAILY_HOURS if kept[0].weekday() in WORK_DAYS else 0.0
     detail = " | ".join(f"{a:%H:%M}-{b:%H:%M}" if b else f"{a:%H:%M}-…" for a, b in segments)
     if on_break:
         detail += " | pause en cours"
@@ -345,7 +353,8 @@ def build_day(punches, closed, door_punches=(), pro=False, forced_pause=None, do
         "morning_breaks": break_minutes(MORNING_BREAKS),
         "afternoon_breaks": break_minutes(AFTERNOON_BREAKS),
         "pause_hours": round(_hours(*pause), 4) if pause and pause[1] else 0.0,
-        "hours": round(max(hours, 0.0), 2),
+        "hours": hours,
+        "overtime": round(hours - expected, 2) if check_out else 0.0,
         "detail": detail,
         "anomaly": "; ".join(anomalies),
     }
@@ -416,7 +425,7 @@ def attendance_values(day, fields, field_types=None):
     data = {"pause_start": utc(day["pause_start"]), "pause_end": utc(day["pause_end"]), "hours": day["hours"],
             "morning_breaks": _minutes_value(day["morning_breaks"], types.get("morning_breaks")),
             "afternoon_breaks": _minutes_value(day["afternoon_breaks"], types.get("afternoon_breaks")),
-            "pause_hours": day["pause_hours"]}
+            "pause_hours": day["pause_hours"], "overtime": day["overtime"]}
     for key, value in data.items():
         if key in fields:
             vals[fields[key]] = value
@@ -498,7 +507,14 @@ class Odoo:
     def call(self, model, method, *args, **kwargs):
         if self.context:
             kwargs.setdefault("context", self.context)
-        return self.models.execute_kw(ODOO_DB, self.uid, ODOO_API_KEY, model, method, list(args), kwargs)
+        for attempt in range(5):
+            try:
+                return self.models.execute_kw(ODOO_DB, self.uid, ODOO_API_KEY, model, method, list(args), kwargs)
+            except xmlrpc.client.ProtocolError as e:
+                if e.errcode != 429 or attempt == 4:
+                    raise
+                # Odoo SaaS rate limit (large catch-ups): wait and retry
+                time.sleep(10 * (attempt + 1))
 
     def employee_map(self):
         """Map BioTime emp_code to Odoo employee via barcode or identification_id."""

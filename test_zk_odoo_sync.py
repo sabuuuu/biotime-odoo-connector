@@ -1,11 +1,12 @@
 """Tests for day reconstruction and Odoo upsert. Run: python -m unittest -v"""
 import os
 import unittest
+from unittest import mock
 from datetime import date, datetime
 
 # Fixed settings so the tests do not depend on the local .env
 os.environ.update({"BIOTIME_TZ": "Africa/Algiers", "DUPLICATE_MINUTES": "2", "PAUSE_WINDOW": "11:30-15:00",
-                   "OUTING_TOLERANCE_MINUTES": "10", "DEFAULT_CHECKOUT_TIME": "18:00",
+                   "DEDUCT_OUTINGS": "0", "OUTING_TOLERANCE_MINUTES": "10", "DEFAULT_CHECKOUT_TIME": "18:00",
                    "TERMINALS_IGNORE": "DOOR", "TERMINAL_RULES_SINCE": "", "WORK_DAYS": "0,1,2,3",
                    "CLOCK_OFFSETS": "2026-10-05 00:00|2026-10-05 07:00|120; 2026-10-05 07:00|2026-10-05 07:30|60"})
 import zk_odoo_sync as zk  # noqa: E402
@@ -36,6 +37,12 @@ class BuildDayTest(unittest.TestCase):
         d = zk.build_day(at("08:00", "18:00"), closed=True)
         self.assertEqual((d["pause_start"], d["hours"]), (None, 10.0))
 
+    def test_short_breaks_count_as_work(self):
+        d = zk.build_day(at("08:00", "10:00", "10:08", "12:30", "13:30", "15:00", "15:40", "18:00"), closed=True)
+        self.assertEqual((d["outings_count"], d["outings_hours"]), (2, 0.67))
+        self.assertEqual(d["hours"], 10 - 1)  # only the lunch pause is deducted
+
+    @mock.patch.object(zk, "DEDUCT_OUTINGS", True)
     def test_short_outing_tolerated_long_outing_deducted(self):
         d = zk.build_day(at("08:00", "10:00", "10:08", "12:30", "13:30", "15:00", "15:40", "18:00"), closed=True)
         self.assertEqual((d["pause_start"], d["pause_end"]), tuple(at("12:30", "13:30")))
@@ -59,6 +66,17 @@ class BuildDayTest(unittest.TestCase):
         vals = zk.attendance_values(d, fields, {"morning_breaks": "float", "afternoon_breaks": "float"})
         self.assertEqual((vals["x_m"], vals["x_a"]), (12.0, 0.0))
 
+    def test_overtime_is_worked_hours_minus_daily_hours(self):
+        d = zk.build_day(at("07:30", "12:30", "13:30", "19:00"), closed=True)
+        expected = zk.DAILY_HOURS if d["check_in"].weekday() in zk.WORK_DAYS else 0.0
+        self.assertEqual(d["hours"], 10.5)
+        self.assertEqual(d["overtime"], round(10.5 - expected, 2))
+        d = zk.build_day(at("08:00", "10:00", "10:15", "12:30", "13:30", "17:00"), closed=True)
+        self.assertEqual(d["overtime"], round(8.0 - expected, 2))  # short break not deducted, below the day
+        d = zk.build_day(at("08:00", "12:30"), closed=False)  # day in progress: no overtime yet
+        self.assertEqual(d["overtime"], 0.0)
+
+    @mock.patch.object(zk, "DEDUCT_OUTINGS", True)
     def test_pro_outings_count_as_work(self):
         d = zk.build_day(at("08:00", "10:00", "11:00", "12:30", "13:30", "18:00"), closed=True, pro=True)
         self.assertEqual((d["outings_hours"], d["hours"]), (1.0, 9.0))  # only the pause is deducted

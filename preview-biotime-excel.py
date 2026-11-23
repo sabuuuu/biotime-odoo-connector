@@ -31,9 +31,6 @@ RAW_COLUMNS = [
 WARN_FILL = PatternFill("solid", fgColor="FFF2CC")
 DAYS_FR = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
 
-DAILY_HOURS = float(os.environ.get("DAILY_HOURS", "9"))
-
-
 def add_sheet(wb, title, headers, rows, warn_col=None):
     ws = wb.create_sheet(title)
     ws.append(headers)
@@ -96,8 +93,8 @@ def main():
         days = zk.build_days(attendance.get(code, {}), door.get(code, {}), pro, code_corrections=corrected.get(code))
         total, total_gap, with_anomaly = 0.0, 0.0, 0
         for day, d in days.items():
-            expected = DAILY_HOURS if day.weekday() in zk.WORK_DAYS else 0.0
-            gap = round(d["hours"] - expected, 2) if d["check_out"] and not d["anomaly"] else ""
+            expected = zk.DAILY_HOURS if day.weekday() in zk.WORK_DAYS else 0.0
+            gap = d["overtime"] if d["check_out"] else ""
             total += d["hours"]
             total_gap += gap or 0.0
             with_anomaly += bool(d["anomaly"])
@@ -117,7 +114,7 @@ def main():
               ["Numéro d'employé", "Nom BioTime", "Employé Odoo", "Sorties pro", "Date", "Jour",
                "Arrivée (check_in)", "Début pause", "Fin pause", "Durée pause déj (min)", "Départ (check_out)",
                "Pauses matin (min)", "Pauses aprem (min)",
-               "Nb sorties", "Sorties déduites (h)", "Heures travaillées", "Heures prévues", "Écart",
+               "Nb sorties", "Durée sorties (h)", "Heures travaillées", "Heures prévues", "Heures sup",
                "Détail des pointages", "Anomalie"], rows, warn_col=19)
     add_sheet(wb, "Anomalies", ["Numéro d'employé", "Nom", "Date", "Jour", "Anomalie", "Détail des pointages"],
               anomalies)
